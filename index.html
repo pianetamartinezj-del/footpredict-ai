@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0b6e4f"><link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b6e4f">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <script>
 if ('serviceWorker' in navigator) {
@@ -18,86 +19,234 @@ if ('serviceWorker' in navigator) {
 body{margin:0;font-family:system-ui,sans-serif;background:#f2f5f3;color:#1b1b1b}
 header{background:#0b6e4f;color:#fff;padding:16px;text-align:center}
 h1{margin:0;font-size:1.4rem}
+h2{font-size:1.1rem;margin:0 0 4px}
 main{padding:16px;max-width:480px;margin:auto}
 .aviso{background:#fff3cd;border:1px solid #e0b100;padding:10px;border-radius:8px;font-size:.9rem}
+.panel{background:#fff;border-radius:10px;padding:14px;margin-top:16px;box-shadow:0 1px 3px #0002}
 label{display:block;margin-top:14px;font-weight:600}
-input{width:100%;padding:12px;font-size:1.1rem;border:1px solid #bbb;border-radius:8px}
+input,select{width:100%;padding:12px;font-size:1.1rem;border:1px solid #bbb;border-radius:8px;background:#fff}
 button{width:100%;margin-top:18px;padding:14px;font-size:1.1rem;background:#0b6e4f;color:#fff;border:0;border-radius:8px}
-.card{background:#fff;border-radius:10px;padding:14px;margin-top:16px;box-shadow:0 1px 3px #0002}
+button:disabled{background:#8aa89c}
 .fila{margin:10px 0}
 .barra{height:12px;background:#e3e3e3;border-radius:6px;overflow:hidden;margin-top:4px}
 .barra div{height:100%;background:#0b6e4f}
 .error{color:#b00020;margin-top:12px}
+.estado{margin-top:10px;font-size:.9rem;color:#444}
+.chico{font-size:.85rem;color:#555}
 </style>
 </head>
 <body>
 <header><h1>⚽ FootPredict AI</h1></header>
 <main>
-  <div class="aviso">⚠️ <b>Cálculo de demostración.</b> Los resultados no usan datos reales todavía. No los uses para apostar.</div>
+  <div class="aviso">⚠️ <b>Estimación experimental.</b> Modelo simple, todavía sin validar. No garantiza resultados y no debe usarse para apostar.</div>
 
-  <label for="xgl">Goles esperados – Equipo local</label>
-  <input id="xgl" type="number" inputmode="decimal" step="0.1" min="0" max="10" value="1.5">
+  <section class="panel">
+    <h2>1. Con datos reales (Premier League)</h2>
+    <p class="chico">Fuente: openfootball (dominio público). Los goles esperados se calculan solos con los resultados de la temporada.</p>
+    <label for="temporada">Temporada</label>
+    <select id="temporada">
+      <option value="2024-25">2024/25</option>
+      <option value="2025-26">2025/26</option>
+      <option value="2026-27">2026/27</option>
+    </select>
+    <button id="btnCargar" type="button">Cargar temporada</button>
+    <div id="estado" class="estado"></div>
 
-  <label for="xgv">Goles esperados – Equipo visitante</label>
-  <input id="xgv" type="number" inputmode="decimal" step="0.1" min="0" max="10" value="1.1">
+    <div id="selectores" hidden>
+      <label for="eqLocal">Equipo local</label>
+      <select id="eqLocal"></select>
+      <label for="eqVisita">Equipo visitante</label>
+      <select id="eqVisita"></select>
+      <button id="btnEquipos" type="button">Calcular con datos reales</button>
+    </div>
+    <div id="errorEq" class="error"></div>
+    <div id="resultadoEq"></div>
+  </section>
 
-  <button onclick="calcular()">Calcular probabilidades</button>
-  <div id="error" class="error"></div>
-  <div id="resultado"></div>
+  <section class="panel">
+    <h2>2. Modo manual (demostración)</h2>
+    <label for="xgl">Goles esperados – Equipo local</label>
+    <input id="xgl" type="number" inputmode="decimal" step="0.1" min="0" max="10" value="1.5">
+    <label for="xgv">Goles esperados – Equipo visitante</label>
+    <input id="xgv" type="number" inputmode="decimal" step="0.1" min="0" max="10" value="1.1">
+    <button id="btnManual" type="button">Calcular probabilidades</button>
+    <div id="error" class="error"></div>
+    <div id="resultado"></div>
+  </section>
 </main>
 
 <script>
+var URL_BASE = 'https://raw.githubusercontent.com/openfootball/football.json/master/';
+var K_SUAVIZADO = 5;   // partidos "imaginarios" promedio para no exagerar con pocos datos
+var MIN_PARTIDOS = 20; // mínimo de partidos jugados para calcular
+var liga = null;
+
+function el(id){ return document.getElementById(id); }
+
 function poisson(k, l){
-  let p = Math.exp(-l);
-  for(let i = 1; i <= k; i++) p *= l / i;
+  var p = Math.exp(-l);
+  for (var i = 1; i <= k; i++) p *= l / i;
   return p;
 }
 
-function fila(nombre, valor){
-  const v = (valor * 100).toFixed(1);
+function probabilidades(h, a){
+  var N = 10, r = {local:0, empate:0, visita:0, mas25:0, ambos:0, marcador:'0-0'};
+  var total = 0, mejor = 0;
+  for (var i = 0; i <= N; i++){
+    for (var j = 0; j <= N; j++){
+      var p = poisson(i, h) * poisson(j, a);
+      total += p;
+      if (i > j) r.local += p; else if (i === j) r.empate += p; else r.visita += p;
+      if (i + j > 2) r.mas25 += p;
+      if (i > 0 && j > 0) r.ambos += p;
+      if (p > mejor){ mejor = p; r.marcador = i + '-' + j; }
+    }
+  }
+  ['local','empate','visita','mas25','ambos'].forEach(function(k){ r[k] = r[k] / total; });
+  return r;
+}
+
+function filaHTML(nombre, valor){
+  var v = (valor * 100).toFixed(1);
   return '<div class="fila"><div>' + nombre + ': <b>' + v + '%</b></div>' +
          '<div class="barra"><div style="width:' + v + '%"></div></div></div>';
 }
 
-function calcular(){
-  const h = parseFloat(document.getElementById('xgl').value.replace(',', '.'));
-  const a = parseFloat(document.getElementById('xgv').value.replace(',', '.'));
-  const err = document.getElementById('error');
-  const out = document.getElementById('resultado');
+function tarjeta(titulo, nota, p, extra){
+  var d = document.createElement('div');
+  d.className = 'panel';
+  var h = document.createElement('h3');
+  h.textContent = titulo;
+  d.appendChild(h);
+  var cuerpo = document.createElement('div');
+  cuerpo.innerHTML =
+    (extra || '') +
+    filaHTML('Gana local', p.local) +
+    filaHTML('Empate', p.empate) +
+    filaHTML('Gana visitante', p.visita) +
+    filaHTML('Más de 2.5 goles', p.mas25) +
+    filaHTML('Ambos equipos marcan', p.ambos) +
+    '<p>Marcador más probable: <b>' + p.marcador + '</b></p>';
+  d.appendChild(cuerpo);
+  var n = document.createElement('p');
+  n.className = 'chico';
+  n.textContent = nota;
+  d.appendChild(n);
+  return d;
+}
 
-  if(isNaN(h) || isNaN(a) || h < 0 || a < 0 || h > 10 || a > 10){
+function leerNumero(id){
+  return parseFloat(String(el(id).value).replace(',', '.'));
+}
+
+function calcularManual(){
+  var h = leerNumero('xgl'), a = leerNumero('xgv');
+  var err = el('error'), out = el('resultado');
+  out.innerHTML = '';
+  if (isNaN(h) || isNaN(a) || h < 0 || a < 0 || h > 10 || a > 10){
     err.textContent = 'Escribe números entre 0 y 10.';
-    out.innerHTML = '';
     return;
   }
   err.textContent = '';
-
-  const N = 10;
-  let local = 0, empate = 0, visita = 0, mas25 = 0, ambos = 0, total = 0;
-  let mejor = 0, marcador = '0-0';
-
-  for(let i = 0; i <= N; i++){
-    for(let j = 0; j <= N; j++){
-      const p = poisson(i, h) * poisson(j, a);
-      total += p;
-      if(i > j) local += p; else if(i === j) empate += p; else visita += p;
-      if(i + j > 2) mas25 += p;
-      if(i > 0 && j > 0) ambos += p;
-      if(p > mejor){ mejor = p; marcador = i + '-' + j; }
-    }
-  }
-
-  out.innerHTML = '<div class="card">' +
-    '<h3>Resultados (DEMO)</h3>' +
-    fila('Gana local', local / total) +
-    fila('Empate', empate / total) +
-    fila('Gana visitante', visita / total) +
-    fila('Más de 2.5 goles', mas25 / total) +
-    fila('Ambos equipos marcan', ambos / total) +
-    '<p>Marcador más probable: <b>' + marcador + '</b></p>' +
-    '<p><small>Modelo Poisson con datos de ejemplo. Cálculo de demostración.</small></p>' +
-    '</div>';
+  out.appendChild(tarjeta('Resultados (DEMO)', 'Modelo Poisson con los números que escribiste. Cálculo de demostración.', probabilidades(h, a)));
 }
+
+function construirLiga(partidos){
+  var equipos = {}, jugados = 0, golesL = 0, golesV = 0;
+  partidos.forEach(function(m){
+    if (!m || !m.score || !Array.isArray(m.score.ft) || m.score.ft.length !== 2) return;
+    var gl = Number(m.score.ft[0]), gv = Number(m.score.ft[1]);
+    if (!isFinite(gl) || !isFinite(gv)) return;
+    [m.team1, m.team2].forEach(function(t){
+      if (!equipos[t]) equipos[t] = {pj:0, gf:0, gc:0};
+    });
+    equipos[m.team1].pj++; equipos[m.team1].gf += gl; equipos[m.team1].gc += gv;
+    equipos[m.team2].pj++; equipos[m.team2].gf += gv; equipos[m.team2].gc += gl;
+    jugados++; golesL += gl; golesV += gv;
+  });
+  if (jugados < MIN_PARTIDOS) return {jugados: jugados, insuficiente: true};
+  return {equipos: equipos, jugados: jugados, promL: golesL / jugados, promV: golesV / jugados};
+}
+
+function golesEsperados(liga, local, visita){
+  var base = (liga.promL + liga.promV) / 2;
+  function fuerza(t){
+    var e = liga.equipos[t];
+    return {
+      ataque: ((e.gf + K_SUAVIZADO * base) / (e.pj + K_SUAVIZADO)) / base,
+      defensa: ((e.gc + K_SUAVIZADO * base) / (e.pj + K_SUAVIZADO)) / base
+    };
+  }
+  var L = fuerza(local), V = fuerza(visita);
+  return {
+    h: liga.promL * L.ataque * V.defensa,
+    a: liga.promV * V.ataque * L.defensa
+  };
+}
+
+function llenarSelect(sel, nombres){
+  sel.innerHTML = '';
+  nombres.forEach(function(n){
+    var o = document.createElement('option');
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  });
+}
+
+function cargarTemporada(){
+  var temp = el('temporada').value;
+  var btn = el('btnCargar');
+  var estado = el('estado');
+  el('selectores').hidden = true;
+  el('resultadoEq').innerHTML = '';
+  el('errorEq').textContent = '';
+  liga = null;
+  btn.disabled = true;
+  estado.textContent = 'Cargando temporada ' + temp + '…';
+  fetch(URL_BASE + temp + '/en.1.json')
+    .then(function(r){
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(data){
+      var res = construirLiga(data.matches || []);
+      if (res.insuficiente){
+        estado.textContent = 'Esa temporada tiene solo ' + res.jugados + ' partidos jugados. Se necesitan al menos ' + MIN_PARTIDOS + '. Prueba con otra.';
+        return;
+      }
+      liga = res;
+      var nombres = Object.keys(liga.equipos).sort();
+      llenarSelect(el('eqLocal'), nombres);
+      llenarSelect(el('eqVisita'), nombres);
+      if (nombres.length > 1) el('eqVisita').selectedIndex = 1;
+      el('selectores').hidden = false;
+      estado.textContent = 'Listo: ' + liga.jugados + ' partidos de ' + (data.name || temp) +
+        '. Promedio de goles: local ' + liga.promL.toFixed(2) + ', visitante ' + liga.promV.toFixed(2) + '.';
+    })
+    .catch(function(e){
+      estado.textContent = 'No se pudo cargar (' + e.message + '). Revisa tu internet o prueba otra temporada.';
+    })
+    .then(function(){ btn.disabled = false; });
+}
+
+function calcularEquipos(){
+  var out = el('resultadoEq'), err = el('errorEq');
+  out.innerHTML = '';
+  err.textContent = '';
+  if (!liga) { err.textContent = 'Primero carga una temporada.'; return; }
+  var local = el('eqLocal').value, visita = el('eqVisita').value;
+  if (!liga.equipos[local] || !liga.equipos[visita]){ err.textContent = 'Elige dos equipos.'; return; }
+  if (local === visita){ err.textContent = 'Elige dos equipos distintos.'; return; }
+  var g = golesEsperados(liga, local, visita);
+  var extra = '<p class="chico">Goles esperados: ' + g.h.toFixed(2) + ' (local) y ' + g.a.toFixed(2) + ' (visitante).</p>';
+  out.appendChild(tarjeta(local + ' vs ' + visita,
+    'Estimación experimental con resultados de una sola temporada. Modelo sin validar: no incluye lesiones, forma reciente ni calendario.',
+    probabilidades(g.h, g.a), extra));
+}
+
+el('btnCargar').addEventListener('click', cargarTemporada);
+el('btnEquipos').addEventListener('click', calcularEquipos);
+el('btnManual').addEventListener('click', calcularManual);
 </script>
 </body>
 </html>
