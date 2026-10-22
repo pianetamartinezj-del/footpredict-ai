@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b6e4f">
+<title>FootPredict AI</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:#f2f5f3;color:#1b1b1b}
+header{background:#0b6e4f;color:#fff;padding:16px;text-align:center}
+h1{margin:0;font-size:1.4rem}
+main{padding:16px;max-width:480px;margin:auto}
+.aviso{background:#fff3cd;border:1px solid #e0b100;padding:10px;border-radius:8px;font-size:.9rem}
+label{display:block;margin-top:14px;font-weight:600}
+input{width:100%;padding:12px;font-size:1.1rem;border:1px solid #bbb;border-radius:8px}
+button{width:100%;margin-top:18px;padding:14px;font-size:1.1rem;background:#0b6e4f;color:#fff;border:0;border-radius:8px}
+.card{background:#fff;border-radius:10px;padding:14px;margin-top:16px;box-shadow:0 1px 3px #0002}
+.fila{margin:10px 0}
+.barra{height:12px;background:#e3e3e3;border-radius:6px;overflow:hidden;margin-top:4px}
+.barra div{height:100%;background:#0b6e4f}
+.error{color:#b00020;margin-top:12px}
+</style>
+</head>
+<body>
+<header><h1>⚽ FootPredict AI</h1></header>
+<main>
+  <div class="aviso">⚠️ <b>Cálculo de demostración.</b> Los resultados no usan datos reales todavía. No los uses para apostar.</div>
+
+  <label for="xgl">Goles esperados – Equipo local</label>
+  <input id="xgl" type="number" inputmode="decimal" step="0.1" min="0" max="10" value="1.5">
+
+  <label for="xgv">Goles esperados – Equipo visitante</label>
+  <input id="xgv" type="number" inputmode="decimal" step="0.1" min="0" max="10" value="1.1">
+
+  <button onclick="calcular()">Calcular probabilidades</button>
+  <div id="error" class="error"></div>
+  <div id="resultado"></div>
+</main>
+
+<script>
+function poisson(k, l){
+  let p = Math.exp(-l);
+  for(let i = 1; i <= k; i++) p *= l / i;
+  return p;
+}
+
+function fila(nombre, valor){
+  const v = (valor * 100).toFixed(1);
+  return '<div class="fila"><div>' + nombre + ': <b>' + v + '%</b></div>' +
+         '<div class="barra"><div style="width:' + v + '%"></div></div></div>';
+}
+
+function calcular(){
+  const h = parseFloat(document.getElementById('xgl').value.replace(',', '.'));
+  const a = parseFloat(document.getElementById('xgv').value.replace(',', '.'));
+  const err = document.getElementById('error');
+  const out = document.getElementById('resultado');
+
+  if(isNaN(h) || isNaN(a) || h < 0 || a < 0 || h > 10 || a > 10){
+    err.textContent = 'Escribe números entre 0 y 10.';
+    out.innerHTML = '';
+    return;
+  }
+  err.textContent = '';
+
+  const N = 10;
+  let local = 0, empate = 0, visita = 0, mas25 = 0, ambos = 0, total = 0;
+  let mejor = 0, marcador = '0-0';
+
+  for(let i = 0; i <= N; i++){
+    for(let j = 0; j <= N; j++){
+      const p = poisson(i, h) * poisson(j, a);
+      total += p;
+      if(i > j) local += p; else if(i === j) empate += p; else visita += p;
+      if(i + j > 2) mas25 += p;
+      if(i > 0 && j > 0) ambos += p;
+      if(p > mejor){ mejor = p; marcador = i + '-' + j; }
+    }
+  }
+
+  out.innerHTML = '<div class="card">' +
+    '<h3>Resultados (DEMO)</h3>' +
+    fila('Gana local', local / total) +
+    fila('Empate', empate / total) +
+    fila('Gana visitante', visita / total) +
+    fila('Más de 2.5 goles', mas25 / total) +
+    fila('Ambos equipos marcan', ambos / total) +
+    '<p>Marcador más probable: <b>' + marcador + '</b></p>' +
+    '<p><small>Modelo Poisson con datos de ejemplo. Cálculo de demostración.</small></p>' +
+    '</div>';
+}
+</script>
+</body>
+</html>
