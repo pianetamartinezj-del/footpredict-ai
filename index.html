@@ -58,9 +58,11 @@ button:disabled{background:#8aa89c}
       <label for="eqVisita">Equipo visitante</label>
       <select id="eqVisita"></select>
       <button id="btnEquipos" type="button">Calcular con datos reales</button>
+      <button id="btnProbar" type="button">Probar el modelo</button>
     </div>
     <div id="errorEq" class="error"></div>
     <div id="resultadoEq"></div>
+    <div id="resultadoPrueba"></div>
   </section>
 
   <section class="panel">
@@ -152,11 +154,12 @@ function calcularManual(){
 }
 
 function construirLiga(partidos){
-  var equipos = {}, jugados = 0, golesL = 0, golesV = 0;
-  partidos.forEach(function(m){
+  var equipos = {}, jugados = 0, golesL = 0, golesV = 0, validos = [];
+  partidos.forEach(function(m, idx){
     if (!m || !m.score || !Array.isArray(m.score.ft) || m.score.ft.length !== 2) return;
     var gl = Number(m.score.ft[0]), gv = Number(m.score.ft[1]);
     if (!isFinite(gl) || !isFinite(gv)) return;
+    validos.push({m: m, i: idx});
     [m.team1, m.team2].forEach(function(t){
       if (!equipos[t]) equipos[t] = {pj:0, gf:0, gc:0};
     });
@@ -165,7 +168,12 @@ function construirLiga(partidos){
     jugados++; golesL += gl; golesV += gv;
   });
   if (jugados < MIN_PARTIDOS) return {jugados: jugados, insuficiente: true};
-  return {equipos: equipos, jugados: jugados, promL: golesL / jugados, promV: golesV / jugados};
+  validos.sort(function(a, b){
+    var da = a.m.date || '', db = b.m.date || '';
+    return da < db ? -1 : da > db ? 1 : a.i - b.i;
+  });
+  return {equipos: equipos, jugados: jugados, promL: golesL / jugados, promV: golesV / jugados,
+          partidos: validos.map(function(v){ return v.m; })};
 }
 
 function golesEsperados(liga, local, visita){
@@ -199,6 +207,7 @@ function cargarTemporada(){
   var estado = el('estado');
   el('selectores').hidden = true;
   el('resultadoEq').innerHTML = '';
+  el('resultadoPrueba').innerHTML = '';
   el('errorEq').textContent = '';
   liga = null;
   btn.disabled = true;
@@ -244,8 +253,76 @@ function calcularEquipos(){
     probabilidades(g.h, g.a), extra));
 }
 
+function indiceMayor(v){
+  var k = 0;
+  for (var i = 1; i < v.length; i++) if (v[i] > v[k]) k = i;
+  return k;
+}
+
+function probarModelo(){
+  var out = el('resultadoPrueba'), err = el('errorEq');
+  out.innerHTML = '';
+  err.textContent = '';
+  if (!liga) { err.textContent = 'Primero carga una temporada.'; return; }
+  var ps = liga.partidos;
+  var corte = Math.floor(ps.length * 2 / 3);
+  var ent = ps.slice(0, corte), pru = ps.slice(corte);
+  var modelo = construirLiga(ent);
+  if (modelo.insuficiente || pru.length < 10){
+    err.textContent = 'No hay suficientes partidos para hacer la prueba.';
+    return;
+  }
+  var cuenta = [0, 0, 0];
+  ent.forEach(function(m){
+    var a = Number(m.score.ft[0]), b = Number(m.score.ft[1]);
+    cuenta[a > b ? 0 : (a === b ? 1 : 2)]++;
+  });
+  var frec = cuenta.map(function(c){ return c / ent.length; });
+  var n = 0, omitidos = 0, okM = 0, okB = 0, brM = 0, brB = 0;
+  pru.forEach(function(m){
+    if (!modelo.equipos[m.team1] || !modelo.equipos[m.team2]) { omitidos++; return; }
+    var a = Number(m.score.ft[0]), b = Number(m.score.ft[1]);
+    var real = a > b ? 0 : (a === b ? 1 : 2);
+    var g = golesEsperados(modelo, m.team1, m.team2);
+    var p = probabilidades(g.h, g.a);
+    var pv = [p.local, p.empate, p.visita];
+    for (var i = 0; i < 3; i++){
+      var o = (i === real) ? 1 : 0;
+      brM += (pv[i] - o) * (pv[i] - o);
+      brB += (frec[i] - o) * (frec[i] - o);
+    }
+    if (indiceMayor(pv) === real) okM++;
+    if (indiceMayor(frec) === real) okB++;
+    n++;
+  });
+  if (n === 0){ err.textContent = 'No se pudo hacer la prueba con esta temporada.'; return; }
+  brM /= n; brB /= n;
+  var veredicto = brM < brB
+    ? 'El modelo tiene menor error que el modelo ingenuo en esta prueba.'
+    : 'El modelo NO supera al modelo ingenuo en esta prueba.';
+  var d = document.createElement('div');
+  d.className = 'panel';
+  var h = document.createElement('h3');
+  h.textContent = 'Prueba del modelo';
+  d.appendChild(h);
+  var t = document.createElement('div');
+  t.innerHTML =
+    '<p class="chico">Entrenado con los primeros ' + ent.length + ' partidos y probado con los ' + n + ' siguientes (que no había visto).</p>' +
+    '<p>Aciertos del modelo: <b>' + (100 * okM / n).toFixed(1) + '%</b><br>' +
+    'Aciertos del modelo ingenuo: <b>' + (100 * okB / n).toFixed(1) + '%</b></p>' +
+    '<p>Error Brier del modelo: <b>' + brM.toFixed(3) + '</b><br>' +
+    'Error Brier del ingenuo: <b>' + brB.toFixed(3) + '</b><br>' +
+    'Referencia por puro azar (1/3 cada uno): <b>0.667</b></p>' +
+    '<p><b>' + veredicto + '</b></p>' +
+    '<p class="chico">Brier: menor es mejor. "Ingenuo" = usar siempre las mismas probabilidades de local, empate y visitante que hubo en el entrenamiento. Con tan pocos partidos, una diferencia pequeña puede ser suerte. Esto no demuestra que el modelo sirva para ganar apuestas.' +
+    (omitidos ? ' Se omitieron ' + omitidos + ' partidos por equipos sin historial.' : '') + '</p>';
+  d.appendChild(t);
+  out.appendChild(d);
+}
+
 el('btnCargar').addEventListener('click', cargarTemporada);
 el('btnEquipos').addEventListener('click', calcularEquipos);
+el('btnProbar').addEventListener('click', probarModelo);
 el('btnManual').addEventListener('click', calcularManual);
 </script>
 </body>
