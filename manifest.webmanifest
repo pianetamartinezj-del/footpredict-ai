@@ -1,0 +1,19 @@
+{
+  "name": "FootPredict AI",
+  "short_name": "FootPredict",
+  "description": "Prototipo de análisis de fútbol con modelo Poisson. Cálculos de demostración.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f2f5f3",
+  "theme_color": "#0b6e4f",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
